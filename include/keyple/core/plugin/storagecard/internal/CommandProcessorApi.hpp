@@ -1,0 +1,244 @@
+/******************************************************************************
+ * Copyright (c) 2026 Calypso Networks Association https://calypsonet.org/    *
+ *                                                                            *
+ * This program and the accompanying materials are made available under the   *
+ * terms of the MIT License which is available at                             *
+ * https://opensource.org/licenses/MIT.                                       *
+ *                                                                            *
+ * SPDX-License-Identifier: MIT                                               *
+ ******************************************************************************/
+
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+#include "keyple/core/plugin/storagecard/internal/KeyStorageType.hpp"
+
+namespace keyple {
+namespace core {
+namespace plugin {
+namespace storagecard {
+namespace internal {
+
+/**
+ * Interface defining a command processor for interacting with a storage
+ * card.
+ *
+ * <p>To be implemented by the plugin.
+ *
+ * <h3>Exception Handling</h3>
+ *
+ * <p>All methods may throw exceptions to indicate error conditions.
+ * Implementations should distinguish between:
+ *
+ * <ul>
+ *   <li>std::invalid_argument - For invalid parameters that can be
+ *       validated before hardware access
+ *   <li>std::exception - For technical errors during hardware operations
+ *       (communication failures, authentication failures, etc.)
+ * </ul>
+ *
+ * <p>The exception message should provide clear diagnostic information
+ * about the failure cause.
+ *
+ * @since 1.0.0
+ */
+class CommandProcessorApi {
+public:
+    /**
+     * Virtual destructor.
+     */
+    virtual ~CommandProcessorApi() = default;
+
+    /**
+     * Transmits a standard APDU command to the card.
+     *
+     * @param apdu The APDU ISO 7816-4 command.
+     * @return The response from the card including both data and status
+     * words.
+     * @throw std::invalid_argument if apdu is empty or invalid.
+     * @throw std::exception if transmission fails or communication error
+     * occurs.
+     * @since 1.0.0
+     */
+    virtual std::vector<uint8_t>
+    transmitIsoApdu(const std::vector<std::uint8_t>& apdu) = 0;
+
+    /**
+     * Retrieves the Unique Identifier (UID) of the card.
+     *
+     * <p>This method obtains the UID which uniquely identifies the card.
+     * The UID length varies depending on the card type.
+     *
+     * <p>If the UID is not available for the current card type, an empty
+     * byte array will be returned.
+     *
+     * @return A byte array containing the card's UID, or an empty array if
+     * the UID is not available.
+     * @throw std::exception if the retrieval operation fails or
+     * communication error occurs.
+     * @since 1.0.0
+     */
+    virtual std::vector<std::uint8_t> getUID() = 0;
+
+    /**
+     * Reads data starting from a specified block address.
+     *
+     * <p>This method handles reading memory blocks according to the card's
+     * memory page structure. The requested length should be a multiple of
+     * the card's page size and must not exceed the maximum readable size in
+     * a single exchange with the specific card type.
+     *
+     * <p>For example, Mifare Ultralight cards have 4-byte pages, but each
+     * read command returns 4 pages (16 bytes) at once. ST25/SRT512 cards
+     * read one page at a time.
+     *
+     * <p>If the requested length is shorter than the actual exchange size
+     * with the card, the response will be truncated accordingly.
+     *
+     * @param blockAddress The address of the first block to be read.
+     * @param length The number of bytes to read, should be a multiple of
+     * the card's page size and must not exceed the maximum readable size
+     * for the specific card type.
+     * @return A byte array containing the block data.
+     * @throw std::invalid_argument if blockAddress is out of range or
+     * length is negative, not compatible with the card's page structure, or
+     * exceeds the maximum readable size.
+     * @throw std::exception if the read operation fails or communication
+     * error occurs.
+     * @since 1.0.0
+     */
+    virtual std::vector<std::uint8_t>
+    readBlock(int blockAddress, int length) = 0;
+
+    /**
+     * Writes data to a specified memory block on the card.
+     *
+     * <p>This method handles writing memory blocks according to the card's
+     * memory page structure. The data length must exactly match the
+     * exchange size for the specific card type.
+     *
+     * @param blockAddress The address of the first block to be written.
+     * @param data The byte array containing the data to write. The length
+     * must match exactly the card's page size or exchange size.
+     * @throw std::invalid_argument if blockAddress is out of range or if
+     * data length does not match the required exchange size for the card
+     * type.
+     * @throw std::exception if the write operation fails or communication
+     * error occurs.
+     * @since 1.0.0
+     */
+    virtual void
+    writeBlock(int blockAddress, const std::vector<std::uint8_t>& data) = 0;
+
+    /**
+     * Loads a card-specific authentication key into the reader's memory.
+     *
+     * <p>This method stores a card key in either volatile (RAM) or
+     * non-volatile (EEPROM) memory of the card reader. The key can be
+     * subsequently used by the generalAuthenticate(int, int, int) method to
+     * authenticate to the card. This command can be used for all kinds of
+     * contactless cards.
+     *
+     * <p>Volatile memory provides temporary storage that is cleared when
+     * the reader loses power, while non-volatile memory persists across
+     * power cycles. The availability of non-volatile memory depends on the
+     * specific reader hardware.
+     *
+     * <p>The key structure and length depend on the card type. For
+     * example:
+     *
+     * <ul>
+     *   <li>Mifare cards: 6-byte keys (Type A or Type B)
+     *   <li>Other contactless cards: card-specific key formats
+     * </ul>
+     *
+     * <p>The key number parameter identifies the storage location in the
+     * reader's memory. The valid range and meaning of key numbers depend on
+     * the reader implementation and whether volatile or non-volatile memory
+     * is used. Consult the reader documentation for specific key number
+     * assignments.
+     *
+     * <p>Note that keys stored in memory cannot be read back for security
+     * reasons. Once loaded, they can only be used for authentication
+     * operations.
+     *
+     * @param keyStorageType The type of memory to store the key in
+     * (VOLATILE or NON_VOLATILE).
+     * @param keyNumber The key index identifying the storage location.
+     * Valid ranges depend on the reader implementation and memory type.
+     * @param key A byte array containing the card-specific key value. Must
+     * not be empty. The required length depends on the card type and
+     * authentication algorithm.
+     * @throw std::invalid_argument if key is empty, if the key length is
+     * not valid for the card type, or if keyNumber is not in the valid
+     * range for the reader and memory type.
+     * @throw std::exception if the load operation fails, if the specified
+     * memory type is not available on the reader hardware, or if a
+     * communication error occurs.
+     * @see generalAuthenticate(int, int, int)
+     * @since 1.1.0
+     */
+    virtual void loadKey(
+        KeyStorageType keyStorageType,
+        int keyNumber,
+        const std::vector<std::uint8_t>& key)
+        = 0;
+
+    /**
+     * Performs authentication to a contactless card using a previously
+     * loaded key.
+     *
+     * <p>This method authenticates to a specific memory location on the
+     * card using a key that was previously loaded into the reader's memory
+     * via the loadKey(KeyStorageType, int, const std::vector<uint8_t>&)
+     * method. Successful authentication is typically required before
+     * performing read or write operations on protected memory areas.
+     *
+     * <p>The authentication process establishes a secure session between
+     * the reader and the card. The block address represents the block
+     * number or starting byte number of the card to be authenticated,
+     * depending on the card type.
+     *
+     * <p>The key type parameter is card-specific and indicates which type
+     * of key to use for authentication. Examples:
+     *
+     * <ul>
+     *   <li>Mifare cards: 0x60 (KEY_A) or 0x61 (KEY_B)
+     *   <li>Other contactless cards: card-specific key type values
+     * </ul>
+     *
+     * <p>The key number parameter references a key previously loaded via
+     * loadKey(KeyStorageType, int, const std::vector<uint8_t>&) and
+     * identifies which stored key to use for this authentication
+     * operation.
+     *
+     * @param blockAddress The block number or starting byte number on the
+     * card where authentication is to be performed. Valid range depends on
+     * the card type and memory structure.
+     * @param keyType The type of key to use for authentication. The valid
+     * values are card-specific (e.g., 0x60 or 0x61 for Mifare cards).
+     * @param keyNumber The index of the previously loaded key to use for
+     * authentication. Must reference a key that was loaded via
+     * loadKey(KeyStorageType, int, const std::vector<uint8_t>&).
+     * @return true if authentication succeeded, false if authentication
+     * failed (e.g., incorrect key).
+     * @throw std::invalid_argument if blockAddress is out of valid range
+     * for the card type, if keyType is not supported by the card, or if
+     * keyNumber does not reference a valid loaded key.
+     * @throw std::exception if the referenced key was not previously
+     * loaded, if the card does not support authentication, or if a
+     * communication error occurs.
+     * @see loadKey(KeyStorageType, int, const std::vector<uint8_t>&)
+     * @since 1.1.0
+     */
+    virtual bool
+    generalAuthenticate(int blockAddress, int keyType, int keyNumber) = 0;
+};
+
+} /* namespace internal */
+} /* namespace storagecard */
+} /* namespace plugin */
+} /* namespace core */
+} /* namespace keyple */
